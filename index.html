@@ -201,36 +201,63 @@
             dot.className = `w-2.5 h-2.5 rounded-full ${state === 'loading' ? 'bg-yellow-500' : 'bg-emerald-500'}`;
         }
 
-        // LẤY DANH SÁCH TOÀN BỘ COIN 
+        // CƠ CHẾ FETCH PROXY LUÂN PHIÊN (KHẮC PHỤC LỖI TẢI DANH SÁCH)
         async function initSymbols() {
             updateStatus('loading', 'Đang tải toàn bộ danh sách Futures...');
+            let targetUrl = 'https://contract.mexc.com/api/v1/contract/ticker';
+            let json = null;
+
+            // 1. Thử gọi trực tiếp (Nếu bạn có cài Tiện ích Allow CORS, nó sẽ ăn ngay lập tức)
             try {
-                // Sử dụng AllOrigins để lấy Ticker MEXC (không bị chặn)
-                let res = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent('https://contract.mexc.com/api/v1/contract/ticker')}`);
-                let json = await res.json();
+                let res = await fetch(targetUrl);
+                if (res.ok) json = await res.json();
+            } catch(e) {
+                console.log("Không thể gọi trực tiếp, đang chuyển sang Proxy...");
+            }
 
-                if (json.success && json.data) {
-                    // Lọc toàn bộ các cặp có đuôi _USDT, không dùng lệnh .slice() cắt mảng nữa
-                    let futuresList = json.data
-                        .filter(item => item.symbol && item.symbol.endsWith('_USDT'))
-                        .sort((a, b) => parseFloat(b.amount24 || b.volume24 || 0) - parseFloat(a.amount24 || a.volume24 || 0));
-
-                    futuresList.forEach(item => {
-                        let cleanSym = item.symbol.replace('_', '');
-                        topSymbols.push(cleanSym);
-
-                        let changePct = parseFloat(item.riseFallRate || 0) * 100;
-                        tickerMap[cleanSym] = {
-                            price: parseFloat(item.lastPrice || 0),
-                            change: isNaN(changePct) ? 0 : changePct
-                        };
-                    });
-
-                    document.getElementById('statTotalPairs').innerText = topSymbols.length;
-                    updateStatus('ready', `Sẵn sàng (${topSymbols.length} cặp)`);
+            // 2. Đi đường vòng qua 3 Proxy nếu cách 1 thất bại
+            if (!json || !json.success) {
+                let proxies = [
+                    `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`,
+                    `https://corsproxy.io/?url=${encodeURIComponent(targetUrl)}`,
+                    `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`
+                ];
+                
+                for (let proxy of proxies) {
+                    try {
+                        let res = await fetch(proxy);
+                        if (res.ok) {
+                            json = await res.json();
+                            if (json && json.success) break;
+                        }
+                    } catch (e) {
+                        console.warn("Proxy lỗi:", proxy);
+                    }
                 }
-            } catch (e) {
-                updateStatus('ready', 'Lỗi tải danh sách. Vui lòng F5 (tải lại trang).');
+            }
+
+            // Xử lý dữ liệu sau khi tải thành công
+            if (json && json.success && json.data) {
+                let futuresList = json.data
+                    .filter(item => item.symbol && item.symbol.endsWith('_USDT'))
+                    .sort((a, b) => parseFloat(b.amount24 || b.volume24 || 0) - parseFloat(a.amount24 || a.volume24 || 0));
+
+                futuresList.forEach(item => {
+                    let cleanSym = item.symbol.replace('_', '');
+                    topSymbols.push(cleanSym);
+
+                    let changePct = parseFloat(item.riseFallRate || 0) * 100;
+                    tickerMap[cleanSym] = {
+                        price: parseFloat(item.lastPrice || 0),
+                        change: isNaN(changePct) ? 0 : changePct
+                    };
+                });
+
+                document.getElementById('statTotalPairs').innerText = topSymbols.length;
+                updateStatus('ready', `Sẵn sàng (${topSymbols.length} cặp)`);
+            } else {
+                updateStatus('ready', 'Lỗi mạng! Vui lòng làm theo hướng dẫn.');
+                alert("❌ KHÔNG THỂ LẤY DỮ LIỆU TỪ SÀN MEXC ❌\n\nCác máy chủ Proxy công cộng đang bị quá tải hoặc bị MEXC chặn.\n\nĐỂ KHẮC PHỤC TRIỆT ĐỂ 100% VÀ QUÉT SIÊU TỐC:\n1. Mở tiện ích mở rộng trên Chrome/Cốc Cốc, tìm và cài đặt 'Allow CORS'.\n2. Bật tiện ích đó lên (biểu tượng sáng màu cam).\n3. Tải lại trang web này là xong.");
             }
         }
 
@@ -241,7 +268,6 @@
             updateStatus('ready', 'Đã dừng');
         }
 
-        // THUẬT TOÁN TOÁN HỌC MACD (TỪ JS GITHUB)
         function calcEMA(data, period) {
             let k = 2 / (period + 1);
             let ema = new Array(data.length);
@@ -356,7 +382,6 @@
             return { found: lastSignalAgo >= 0, candlesAgo: lastSignalAgo };
         }
 
-        // HÀM LẤY NẾN (Ưu tiên Binance Public API, dự phòng MEXC Public)
         async function getKlines(symbol, timeItem) {
             try {
                 let res = await fetch(`https://data-api.binance.vision/api/v3/klines?symbol=${symbol}&interval=${timeItem.binanceTf}&limit=1000`);
@@ -377,7 +402,6 @@
             return null;
         }
 
-        // VÒNG LẶP QUÉT CHÍNH
         async function startScan(tfKey) {
             if (topSymbols.length === 0) await initSymbols();
             if (isScanning || topSymbols.length === 0) return;
@@ -427,7 +451,6 @@
 
                 applyFiltersAndRender();
                 
-                // Tránh rate limit khi quét toàn bộ hàng ngàn cặp
                 await new Promise(r => setTimeout(r, 20));
             }
 
@@ -436,7 +459,6 @@
             updateStatus('ready', `Đã quét xong ${tfKey}!`);
         }
 
-        // BỘ LỌC VÀ HIỂN THỊ DỮ LIỆU
         function applyFiltersAndRender() {
             let keyword = document.getElementById('searchSymbol').value.trim().toUpperCase();
             let sortOption = document.getElementById('sortOption').value;
@@ -504,7 +526,6 @@
             tbody.innerHTML = html;
         }
 
-        // CHIA SẺ ẢNH
         async function shareAsImage() {
             let btnShare = document.getElementById('btnShareImg');
             let originalText = btnShare.innerHTML;
