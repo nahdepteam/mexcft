@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Scanner Báo Đáy MACD</title>
+    <title>Scanner Báo Đáy MACD Toàn Thị Trường</title>
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
@@ -121,6 +121,7 @@
                         <option value="1" selected>⚡ Chấp nhận Nến Live (0) & Nến vừa đóng (1)</option>
                         <option value="0">Chỉ nến Live (0)</option>
                         <option value="3">Trong vòng ≤ 3 nến</option>
+                        <option value="5">Trong vòng ≤ 5 nến</option>
                     </select>
                 </div>
                 <div class="space-y-1">
@@ -201,13 +202,11 @@
             dot.className = `w-2.5 h-2.5 rounded-full ${state === 'loading' ? 'bg-yellow-500' : 'bg-emerald-500'}`;
         }
 
-        // CƠ CHẾ FETCH PROXY LUÂN PHIÊN (KHẮC PHỤC LỖI TẢI DANH SÁCH)
         async function initSymbols() {
             updateStatus('loading', 'Đang tải toàn bộ danh sách Futures...');
             let targetUrl = 'https://contract.mexc.com/api/v1/contract/ticker';
             let json = null;
 
-            // 1. Thử gọi trực tiếp (Nếu bạn có cài Tiện ích Allow CORS, nó sẽ ăn ngay lập tức)
             try {
                 let res = await fetch(targetUrl);
                 if (res.ok) json = await res.json();
@@ -215,7 +214,6 @@
                 console.log("Không thể gọi trực tiếp, đang chuyển sang Proxy...");
             }
 
-            // 2. Đi đường vòng qua 3 Proxy nếu cách 1 thất bại
             if (!json || !json.success) {
                 let proxies = [
                     `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`,
@@ -236,7 +234,6 @@
                 }
             }
 
-            // Xử lý dữ liệu sau khi tải thành công
             if (json && json.success && json.data) {
                 let futuresList = json.data
                     .filter(item => item.symbol && item.symbol.endsWith('_USDT'))
@@ -268,6 +265,7 @@
             updateStatus('ready', 'Đã dừng');
         }
 
+        // THUẬT TOÁN TOÁN HỌC MACD
         function calcEMA(data, period) {
             let k = 2 / (period + 1);
             let ema = new Array(data.length);
@@ -379,7 +377,9 @@
                 }
             }
 
-            return { found: lastSignalAgo >= 0, candlesAgo: lastSignalAgo };
+            // CHỈ GHI NHẬN NẾU TÍN HIỆU XUẤT HIỆN TRONG VÒNG TỐI ĐA 5 NẾN 
+            // (Khắc phục lỗi ghi nhớ quá xa)
+            return { found: lastSignalAgo >= 0 && lastSignalAgo <= 5, candlesAgo: lastSignalAgo };
         }
 
         async function getKlines(symbol, timeItem) {
@@ -417,7 +417,7 @@
             document.getElementById('tableTitle').innerText = `Kết Quả Quét Khung ${tfKey}`;
             updateStatus('loading', `Đang quét khung ${tfKey}...`);
 
-            let scanned = 0, foundCount = 0;
+            let scanned = 0;
             let startTime = Date.now();
 
             for (let i = 0; i < topSymbols.length; i++) {
@@ -429,7 +429,6 @@
                 if (klines) {
                     let res = checkStrictDivergence(klines);
                     if (res.found) {
-                        foundCount++;
                         scanResults.push({
                             symbol: symbol,
                             price: tickerMap[symbol]?.price || 0,
@@ -442,7 +441,7 @@
 
                 scanned++;
                 document.getElementById('statScanned').innerText = scanned;
-                document.getElementById('statFoundTotal').innerText = foundCount;
+                
                 document.getElementById('progressText').innerText = `${scanned} / ${topSymbols.length}`;
                 document.getElementById('progressBar').style.width = `${Math.round((scanned / topSymbols.length) * 100)}%`;
                 
@@ -459,6 +458,7 @@
             updateStatus('ready', `Đã quét xong ${tfKey}!`);
         }
 
+        // ĐỒNG BỘ ĐẾM SỐ LƯỢNG KẾT QUẢ KHỚP VỚI BẢNG
         function applyFiltersAndRender() {
             let keyword = document.getElementById('searchSymbol').value.trim().toUpperCase();
             let sortOption = document.getElementById('sortOption').value;
@@ -476,7 +476,10 @@
                 return 0;
             });
 
+            // Gán trực tiếp số lượng đã lọc vào bộ đếm (Khắc phục lỗi lệch số)
+            document.getElementById('statFoundTotal').innerText = filteredResults.length;
             document.getElementById('resultCountBadge').innerText = `${filteredResults.length} kết quả`;
+            
             renderTable();
         }
 
